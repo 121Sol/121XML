@@ -1,0 +1,52 @@
+# Environment
+.env
+.env.local
+
+# Backups and releases
+/backups/
+/releases/
+*.tar.gz
+*.tar
+*.zip
+
+# SSH keys and secrets
+.ssh/
+*.key
+*.pem
+id_rsa
+id_rsa.pub
+
+# Deployment logs
+/logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-workspace
+
+# Node/npm
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+
+# Docker
+.docker/
+
+# Temporary files
+/tmp/
+/temp/
+*.tmp

@@ -1,0 +1,234 @@
+name: Deploy 121XML
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment target'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - backup
+          - smoke
+          - rollback
+
+env:
+  XML_SSH_HOST: 172.241.29.6
+  XML_SSH_PORT: 19199
+  XML_SSH_USER: xml
+
+jobs:
+  test:
+    name: Validate Content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for required files
+        run: |
+          [ -d "content" ] || (echo "ERROR: content/ directory not found"; exit 1)
+          [ -f "README.md" ] || (echo "WARNING: README.md not found")
+          [ -f "VERSION" ] || (echo "WARNING: VERSION file not found")
+
+      - name: Validate XML files
+        run: |
+          if find content -name "*.xml" | head -1 | grep -q .; then
+            echo "Found XML files, validating..."
+            find content -name "*.xml" | while read f; do
+              echo "Checking: $f"
+              xmllint --noout "$f" || exit 1
+            done
+          else
+            echo "No XML files found (OK)"
+          fi
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://staging.121xml.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.XML_DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p $XML_SSH_PORT -H $XML_SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Create content archive
+        run: |
+          cd content
+          tar -czf ../121xml-content.tar.gz .
+          cd ..
+
+      - name: Deploy to staging
+        run: |
+          STAGING_PATH="/home/xml/staging.121xml.com"
+          scp -P $XML_SSH_PORT 121xml-content.tar.gz $XML_SSH_USER@$XML_SSH_HOST:/tmp/
+          ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST << 'EOF'
+          mkdir -p "$STAGING_PATH"
+          cd "$STAGING_PATH"
+          tar -xzf /tmp/121xml-content.tar.gz
+          rm -f /tmp/121xml-content.tar.gz
+          echo "Deployment timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .deploy-log
+          EOF
+
+      - name: Run smoke tests
+        run: |
+          echo "Testing https://staging.121xml.com/"
+          curl -f -s -o /dev/null -w "%{http_code}" https://staging.121xml.com/ | grep -q "200" && echo "✓ Staging is alive" || exit 1
+
+      - name: Notify deployment
+        if: success()
+        run: |
+          echo "✓ Staging deployment successful"
+
+  deploy-production:
+    name: Deploy to Production
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event.head_commit && contains(github.event.head_commit.message, '[deploy:prod]')
+    environment:
+      name: production
+      url: https://121xml.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify approval
+        run: |
+          if [ -f "APPROVALS/v$(cat VERSION 2>/dev/null || echo '0.0.1').md" ]; then
+            echo "✓ Approval gate found"
+          else
+            echo "⚠ No approval gate found - production deployment requires explicit approval"
+            [ -f "APPROVALS/v$(cat VERSION 2>/dev/null || echo '0.0.1').md" ] || exit 1
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.XML_DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p $XML_SSH_PORT -H $XML_SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Backup production
+        run: |
+          PROD_PATH="/home/xml/public_html"
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          BACKUP_DIR="backups"
+          echo "Backing up production..."
+          ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST << EOF
+          mkdir -p ~/xml_backups
+          tar -czf ~/xml_backups/prod-backup-${TIMESTAMP}.tar.gz -C "$PROD_PATH" . || true
+          EOF
+
+      - name: Create content archive
+        run: |
+          cd content
+          tar -czf ../121xml-content.tar.gz .
+          cd ..
+
+      - name: Deploy to production
+        run: |
+          PROD_PATH="/home/xml/public_html"
+          scp -P $XML_SSH_PORT 121xml-content.tar.gz $XML_SSH_USER@$XML_SSH_HOST:/tmp/
+          ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST << 'EOF'
+          mkdir -p "$PROD_PATH"
+          cd "$PROD_PATH"
+          tar -xzf /tmp/121xml-content.tar.gz
+          rm -f /tmp/121xml-content.tar.gz
+          echo "Deployment timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .deploy-log
+          chmod 755 .
+          find . -type d -exec chmod 755 {} \;
+          find . -type f -exec chmod 644 {} \;
+          EOF
+
+      - name: Run production smoke tests
+        run: |
+          echo "Testing https://121xml.com/"
+          curl -f -s -o /dev/null -w "%{http_code}" https://121xml.com/ | grep -q "200" && echo "✓ Production is alive" || exit 1
+
+      - name: Notify production deployment
+        if: success()
+        run: |
+          echo "✓ Production deployment successful"
+
+  manual-deploy:
+    name: Manual Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: ${{ github.event.inputs.target }}
+      url: ${{ github.event.inputs.target == 'production' && 'https://121xml.com' || 'https://staging.121xml.com' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.XML_DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p $XML_SSH_PORT -H $XML_SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Execute manual action
+        run: |
+          TARGET="${{ github.event.inputs.target }}"
+          ACTION="${{ github.event.inputs.action }}"
+
+          if [ "$ACTION" = "deploy" ]; then
+            echo "Deploying to $TARGET..."
+            if [ "$TARGET" = "production" ]; then
+              echo "Backing up production first..."
+              TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+              ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST "tar -czf ~/xml_backups/prod-backup-${TIMESTAMP}.tar.gz -C /home/xml/public_html . || true"
+            fi
+
+            cd content
+            tar -czf ../121xml-content.tar.gz .
+            cd ..
+
+            REMOTE_PATH="/home/xml/$( [ "$TARGET" = "production" ] && echo "public_html" || echo "staging.121xml.com" )"
+            scp -P $XML_SSH_PORT 121xml-content.tar.gz $XML_SSH_USER@$XML_SSH_HOST:/tmp/
+            ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST "mkdir -p '$REMOTE_PATH' && tar -xzf /tmp/121xml-content.tar.gz -C '$REMOTE_PATH' && rm -f /tmp/121xml-content.tar.gz"
+
+          elif [ "$ACTION" = "backup" ]; then
+            echo "Creating backup of $TARGET..."
+            TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+            REMOTE_PATH="/home/xml/$( [ "$TARGET" = "production" ] && echo "public_html" || echo "staging.121xml.com" )"
+            ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST "tar -czf ~/xml_backups/${TARGET}-backup-${TIMESTAMP}.tar.gz -C '$REMOTE_PATH' . && ls -lh ~/xml_backups/${TARGET}-backup-${TIMESTAMP}.tar.gz"
+
+          elif [ "$ACTION" = "smoke" ]; then
+            URL="$( [ "$TARGET" = "production" ] && echo "https://121xml.com" || echo "https://staging.121xml.com" )"
+            echo "Running smoke test on $URL"
+            curl -f -s -o /dev/null -w "Status: %{http_code}\n" "$URL" || exit 1
+
+          elif [ "$ACTION" = "rollback" ]; then
+            echo "Rolling back $TARGET..."
+            REMOTE_PATH="/home/xml/$( [ "$TARGET" = "production" ] && echo "public_html" || echo "staging.121xml.com" )"
+            LATEST_BACKUP=$(ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST "ls -1t ~/xml_backups/${TARGET}-backup-*.tar.gz 2>/dev/null | head -1")
+
+            if [ -z "$LATEST_BACKUP" ]; then
+              echo "No backup found for rollback"
+              exit 1
+            fi
+
+            echo "Using backup: $LATEST_BACKUP"
+            ssh -p $XML_SSH_PORT $XML_SSH_USER@$XML_SSH_HOST "tar -xzf '$LATEST_BACKUP' -C '$REMOTE_PATH'"
+          fi

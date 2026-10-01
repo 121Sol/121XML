@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://121xml.com/sitemap.xml
+
+# Disallow admin paths
+Disallow: /admin/
+Disallow: /.env
+Disallow: /.git
