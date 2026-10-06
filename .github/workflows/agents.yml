@@ -1,0 +1,29 @@
+﻿name: Cloud Agents
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent_task:
+        description: 'Task for cloud agent'
+        required: true
+        default: 'Build and test'
+      agent_type:
+        description: 'Agent type'
+        required: false
+        default: 'general-purpose'
+
+jobs:
+  spawn_agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Log Agent Task
+        run: |
+          echo "Agent Task: ${{ github.event.inputs.agent_task }}"
+          echo "Agent Type: ${{ github.event.inputs.agent_type }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Time: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+      - name: Notify Agent Execution
+        run: |
+          echo "✓ Agent spawned in cloud"
+          echo "Task: ${{ github.event.inputs.agent_task }}"

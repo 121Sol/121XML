@@ -1,0 +1,28 @@
+﻿{
+  "agents": {
+    "vProgrammer": {
+      "name": "vProgrammer (Ace)",
+      "role": "Lead Developer",
+      "capabilities": ["code-implementation", "testing", "deployment"],
+      "memory_path": "agents/vProgrammer/MEMORY.md",
+      "reporting_to": "vCTO"
+    },
+    "vArchitect": {
+      "name": "vArchitect (Marcus)",
+      "role": "System Designer",
+      "capabilities": ["architecture", "design-review", "scaling"],
+      "memory_path": "agents/vArchitect/MEMORY.md",
+      "reporting_to": "vCTO"
+    },
+    "vQA": {
+      "name": "vQA (Sarah)",
+      "role": "Quality Lead",
+      "capabilities": ["testing", "test-automation", "compliance"],
+      "memory_path": "agents/vQA/MEMORY.md",
+      "reporting_to": "vChief"
+    }
+  },
+  "execution_model": "cloud-first",
+  "memory_sync_interval_ms": 300000,
+  "max_parallel_agents": 5
+}
